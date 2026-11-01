@@ -44,6 +44,17 @@ export function normalizeAxes(raw: unknown): NormalizedAxis[] {
   });
 }
 
+/** The unit shared by all spatial axes (v0.5+ typed axes), or undefined when absent or mixed. */
+export function spatialUnit(raw: unknown): string | undefined {
+  if (!Array.isArray(raw)) return undefined;
+  const axes = normalizeAxes(raw);
+  const units = raw
+    .filter((_, i) => axes[i]?.type === 'space')
+    .map(a => (typeof a === 'object' && a ? (a as { unit?: unknown }).unit : undefined));
+  const [first] = units;
+  return typeof first === 'string' && first && units.every(u => u === first) ? first : undefined;
+}
+
 /**
  * Extract the first multiscales entry from zarr group attrs.
  * Handles both v0.5 layout (attrs.ome.multiscales) and v0.4 (attrs.multiscales).

@@ -20,6 +20,7 @@ import { mountToast } from '../../shared/toast.js';
 import { setupShareButton } from '../../shared/share-button.js';
 import { setupScreenshotButton } from '../../shared/screenshot.js';
 import { mountOrientationGizmo } from '../../shared/orientation-gizmo.js';
+import { mountScaleBar } from '../../shared/scale-bar.js';
 import { mountShortcuts, axisSnapShortcut } from '../../shared/shortcuts.js';
 import { mountLabelsPanel } from '../../shared/labels-panel.js';
 import { parseLabelParam, writeLabelParam } from '../../shared/label-params.js';
@@ -247,6 +248,7 @@ async function main() {
     }
     const takeScreenshot = setupScreenshotButton(viewer, toast);
     const gizmo = mountOrientationGizmo(viewer);
+    mountScaleBar(viewer, canvas);
     mountLayoutButton(quad);
     mountShortcuts([
       { keys: ['1', '2', '3', '4'], display: '1 – 4', label: 'DVR / MIP / ISO / Slice',

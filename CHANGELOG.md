@@ -6,6 +6,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Added
+- A scale bar in both viewers, bottom left of the main view, when the dataset's spatial axes have a unit (OME-Zarr `axes[].unit`). It shows a round length at the camera target and follows zoom and resizing. `VolumeMetadata.spatialUnit` carries the unit.
+
 ## [0.6.1] - 2026-10-31
 
 ### Fixed
