@@ -519,6 +519,40 @@ describe('parseOmeMetadata — native pyramid', () => {
     expect(metadata.pyramid![1]!.origin).toEqual([s / 2, s / 2, s / 2]);
   });
 
+  it('reads a v0.6 dataset like its v0.5 equivalent (as written by ngff-zarr)', () => {
+    const axes = [
+      { name: 'c', type: 'channel' },
+      { name: 'z', type: 'space', unit: 'micrometer' },
+      { name: 'y', type: 'space', unit: 'micrometer' },
+      { name: 'x', type: 'space', unit: 'micrometer' },
+    ];
+    const levels = [
+      { path: 's0', scale: [1, 2, 0.5, 0.5], translation: [0, 10, 0, 0] },
+      { path: 's1', scale: [1, 4, 1, 1], translation: [0, 11, 0.25, 0.25] },
+    ];
+    const v05 = { ome: { version: '0.5', multiscales: [{
+      axes,
+      datasets: levels.map(l => ({ path: l.path, coordinateTransformations: [
+        { type: 'scale', scale: l.scale }, { type: 'translation', translation: l.translation },
+      ] })),
+    }] } };
+    const v06 = { ome: { version: '0.6', multiscales: [{
+      coordinateSystems: [{ name: 'intrinsic', axes }],
+      datasets: levels.map(l => ({ path: l.path, coordinateTransformations: [{
+        input: { path: l.path }, output: { name: 'intrinsic' }, type: 'sequence',
+        transformations: [{ type: 'scale', scale: l.scale }, { type: 'translation', translation: l.translation }],
+      }] })),
+    }] } };
+    const arrays = [arr([2, 96, 128, 160], [2, 96, 128, 128]), arr([2, 48, 64, 80], [2, 48, 64, 80])];
+
+    const { metadata } = provider.parse(v06, arrays);
+    expect(metadata).toEqual(provider.parse(v05, arrays).metadata);
+    expect(metadata.sourceChannelCount).toBe(2);
+    expect(metadata.voxelSpacing).toEqual([0.5, 0.5, 2]);
+    expect(metadata.pyramid![1]!.spacing).toEqual([1, 1, 4]);
+    expect(metadata.pyramid![0]!.origin).toEqual([0, 0, 10]);
+  });
+
   it('legacy keeps loading when the native pyramid is unsupported', () => {
     const legacy = new TestProvider();
     legacy.setPyramidPolicy('legacy');

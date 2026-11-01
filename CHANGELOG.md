@@ -6,6 +6,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Added
+- OME-Zarr 0.6: axes are read from the intrinsic coordinate system and per-level scale and translation from `sequence` transformations. Such datasets used to open with default axes, which lost channels, spacing and origin. Transformations to other coordinate systems and scenes are not applied yet.
+
 ## [0.6.1] - 2026-10-31
 
 ### Fixed

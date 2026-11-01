@@ -1,5 +1,5 @@
 /**
- * Zarr dataset validation for Kiln Render. Supports OME-NGFF v0.4/v0.5.
+ * Zarr dataset validation for Kiln Render. Supports OME-NGFF v0.4/v0.5/v0.6.
  * Shared by dialog pre-validation and provider-level safety-net.
  */
 
@@ -46,15 +46,59 @@ export function normalizeAxes(raw: unknown): NormalizedAxis[] {
 
 /**
  * Extract the first multiscales entry from zarr group attrs.
- * Handles both v0.5 layout (attrs.ome.multiscales) and v0.4 (attrs.multiscales).
+ * Handles v0.5/v0.6 layout (attrs.ome.multiscales) and v0.4 (attrs.multiscales).
+ * A v0.6 entry is returned in the v0.4/v0.5 shape (see fromCoordinateSystems).
  */
 export function extractMultiscales(attrs: Record<string, unknown>): MultiscalesEntry | null {
   const omeAttr = attrs['ome'] as { multiscales?: MultiscalesEntry[] } | undefined;
-  return (
+  const entry =
     omeAttr?.multiscales?.[0] ??
     (attrs['multiscales'] as MultiscalesEntry[] | undefined)?.[0] ??
-    null
-  );
+    null;
+  return entry && !entry.axes && Array.isArray((entry as V06Entry).coordinateSystems)
+    ? fromCoordinateSystems(entry as V06Entry)
+    : entry;
+}
+
+interface V06Transform {
+  type?: string;
+  output?: string | { name?: string };
+  transformations?: V06Transform[];
+  [key: string]: unknown;
+}
+
+type V06Entry = Omit<MultiscalesEntry, 'datasets'> & {
+  coordinateSystems: { name?: string; axes?: unknown }[];
+  datasets: { path: string; coordinateTransformations?: V06Transform[] }[];
+  coordinateTransformations?: V06Transform[];
+};
+
+/**
+ * OME-Zarr v0.6 (RFC-5) moves `axes` into named coordinate systems and allows a level's
+ * scale and translation to be wrapped in a `sequence`. Rewrite such an entry as v0.4/v0.5:
+ * the axes of the intrinsic coordinate system (the one every level maps to), and per level
+ * a flat list of scale and translation. Multiscales-level transformations lead from the
+ * intrinsic system to other coordinate systems; Kiln shows the intrinsic one and skips them.
+ */
+function fromCoordinateSystems(entry: V06Entry): MultiscalesEntry {
+  const output = entry.datasets[0]?.coordinateTransformations?.[0]?.output;
+  const intrinsicName = typeof output === 'string' ? output : output?.name;
+  const system = entry.coordinateSystems.find(s => s.name === intrinsicName) ?? entry.coordinateSystems[0];
+
+  if (entry.coordinateTransformations?.length) {
+    console.warn('[Kiln] OME-Zarr 0.6: transformations to other coordinate systems are not applied; showing the intrinsic coordinate system');
+  }
+
+  const flatten = (ts: V06Transform[] = []): V06Transform[] =>
+    ts.flatMap(t => (t.type === 'sequence' ? flatten(t.transformations) : [t]))
+      .filter(t => t.type === 'scale' || t.type === 'translation');
+
+  return {
+    ...entry,
+    axes: system?.axes,
+    datasets: entry.datasets.map(d => ({ ...d, coordinateTransformations: flatten(d.coordinateTransformations) })),
+    coordinateTransformations: undefined,
+  } as MultiscalesEntry;
 }
 
 /** Assembly reads the volume from the last three array dims; reject layouts that do not match. */

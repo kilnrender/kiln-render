@@ -31,7 +31,7 @@ interface FastOpen {
 }
 
 /**
- * DataProvider implementation for OME-Zarr (NGFF v0.5) volumes over HTTP
+ * DataProvider implementation for OME-Zarr (NGFF v0.4–v0.6) volumes over HTTP
  */
 export class ZarrDataProvider extends BaseZarrProvider {
   private url: string;

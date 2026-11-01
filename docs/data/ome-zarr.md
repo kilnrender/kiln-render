@@ -10,7 +10,7 @@ Any URL that doesn't serve a sharded binary `volume.json` is read as OME-Zarr, s
 
 ## Requirements
 
-- **NGFF v0.4 or v0.5** with `multiscales` metadata
+- **NGFF v0.4, v0.5 or v0.6** with `multiscales` metadata. For v0.6, Kiln reads the axes and per-level scale and translation of the intrinsic coordinate system. Transformations to other coordinate systems (affine, rotation, displacement fields) and scenes are not applied yet
 - **Spatial axes last:** `z, y, x` as usual, or `x, y, z` as written by [webKnossos](https://webknossos.org). Kiln reads the order from `axes` and reads chunks through their strides, so nothing is transposed
 - **Channels:** any 1–4 of a `c` axis at once (see [Multichannel](/rendering/multichannel)); **time:** one timepoint at a time
 - **Labels:** label images in the `labels` group, or at other URLs, are shown as layers over the volume (see [Labels](/rendering/labels))

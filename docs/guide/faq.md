@@ -12,7 +12,7 @@ Without WebGPU, `KilnViewer.create()` rejects with an error, which the demo show
 
 ## Can Kiln read my data?
 
-- **OME-Zarr** (NGFF v0.4/v0.5) loads directly from a URL or local directory: `uint8`, `uint16`, `int16`, `float32` (`float64` is read as `float32`). See [OME-Zarr](/data/ome-zarr).
+- **OME-Zarr** (NGFF v0.4–v0.6) loads directly from a URL or local directory: `uint8`, `uint16`, `int16`, `float32` (`float64` is read as `float32`). See [OME-Zarr](/data/ome-zarr).
 - **Raw volumes** are converted once to the [sharded binary format](/data/sharded-binary) with the bundled CLI.
 
 ## Why won't my dataset load from S3 or my own server?

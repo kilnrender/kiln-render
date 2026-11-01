@@ -159,6 +159,72 @@ describe('extractMultiscales', () => {
   });
 });
 
+describe('extractMultiscales — v0.6 coordinate systems', () => {
+  afterEach(() => vi.restoreAllMocks());
+
+  const czyx = [
+    { name: 'c', type: 'channel' },
+    { name: 'z', type: 'space', unit: 'micrometer' },
+    { name: 'y', type: 'space', unit: 'micrometer' },
+    { name: 'x', type: 'space', unit: 'micrometer' },
+  ];
+  const level = (path: string, scale: number[], translation: number[]) => ({
+    path,
+    coordinateTransformations: [{
+      type: 'sequence', input: { path }, output: { name: 'physical' },
+      transformations: [{ type: 'scale', scale }, { type: 'translation', translation }],
+    }],
+  });
+  const v06 = (extra: Record<string, unknown> = {}) => ({
+    ome: {
+      version: '0.6',
+      multiscales: [{
+        coordinateSystems: [{ name: 'other', axes: [] }, { name: 'physical', axes: czyx }],
+        datasets: [level('0', [1, 2, 0.5, 0.5], [0, 10, 0, 0]), level('1', [1, 4, 1, 1], [0, 11, 0.25, 0.25])],
+        ...extra,
+      }],
+    },
+  });
+
+  it('reads axes from the coordinate system the levels map to', () => {
+    expect(extractMultiscales(v06())!.axes).toEqual(czyx);
+  });
+
+  it('flattens each level’s sequence into scale and translation', () => {
+    const ms = extractMultiscales(v06()) as unknown as { datasets: { coordinateTransformations: unknown[] }[] };
+    expect(ms.datasets[1]!.coordinateTransformations).toEqual([
+      { type: 'scale', scale: [1, 4, 1, 1] },
+      { type: 'translation', translation: [0, 11, 0.25, 0.25] },
+    ]);
+  });
+
+  it('keeps a bare scale and drops identity', () => {
+    const attrs = v06({
+      datasets: [
+        { path: '0', coordinateTransformations: [{ type: 'scale', scale: [1, 1, 1, 1], output: 'physical' }] },
+        { path: '1', coordinateTransformations: [{ type: 'identity', output: 'physical' }] },
+      ],
+    });
+    const ms = extractMultiscales(attrs) as unknown as { datasets: { coordinateTransformations: unknown[] }[] };
+    expect(ms.datasets[0]!.coordinateTransformations).toEqual([{ type: 'scale', scale: [1, 1, 1, 1], output: 'physical' }]);
+    expect(ms.datasets[1]!.coordinateTransformations).toEqual([]);
+  });
+
+  it('does not apply transformations to other coordinate systems, and says so', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const ms = extractMultiscales(v06({
+      coordinateTransformations: [{ type: 'affine', input: 'physical', output: 'world', affine: [[1, 0], [0, 1]] }],
+    })) as unknown as { coordinateTransformations?: unknown };
+    expect(ms.coordinateTransformations).toBeUndefined();
+    expect(warn).toHaveBeenCalledOnce();
+  });
+
+  it('leaves v0.5 entries unchanged', () => {
+    const entry = { axes: czyx, datasets: [{ path: '0' }] };
+    expect(extractMultiscales({ ome: { multiscales: [entry] } })).toBe(entry);
+  });
+});
+
 // ---------------------------------------------------------------------------
 // validateZarrSupport
 // ---------------------------------------------------------------------------
