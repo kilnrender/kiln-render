@@ -16,7 +16,7 @@ Any URL that doesn't serve a sharded binary `volume.json` is read as OME-Zarr, s
 - **Labels:** label images in the `labels` group, or at other URLs, are shown as layers over the volume (see [Labels](/rendering/labels))
 - **Data types:** `uint8`, `uint16`, `int16`, `float32`; `float64` is read as `float32`. Others, such as `int8` or `uint32`, are rejected with a reason
 - **Levels:** each multiscale level is a LOD. Kiln reads each level's own size and per-axis downsampling (1× or 2×). If the levels don't fit that model, for example a level a few slices short of half its parent, it falls back to a uniform 2:1 model and logs why. `?pyramid=native` or `?pyramid=legacy` forces either
-- **Spacing** from `coordinateTransformations`; **windows** from OMERO metadata when present
+- **Spacing** from `coordinateTransformations`; **units** from the spatial axes, shown as a scale bar in the viewers; **windows** from OMERO metadata when present
 
 ## Storage on the GPU
 
