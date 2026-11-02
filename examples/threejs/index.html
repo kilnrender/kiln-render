@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Kiln × Three.js — integration prototype</title>
+  <style>
+    html,body { margin:0; height:100%; background:#0b101a; color:#edf2fa; font:14px system-ui,sans-serif }
+    #stage { position:relative; width:100%; height:100%; overflow:hidden }
+    canvas { position:absolute; inset:0; width:100%; height:100%; display:block }
+    #geometry { pointer-events:none }
+    #panel { position:absolute; top:16px; left:16px; background:#111b2cdd; padding:14px 18px; border-radius:10px; max-width:340px; backdrop-filter:blur(12px) }
+    #panel p { margin:8px 0; line-height:1.5; color:#bdcbe0 }
+    #status { color:#a8e6c1 }
+    a { color:#8ccaff }
+  </style>
+</head>
+<body>
+  <div id="stage">
+    <canvas id="volume"></canvas>
+    <canvas id="geometry"></canvas>
+    <section id="panel">
+      <strong>Kiln × Three.js</strong>
+      <p>Orbit / pan / zoom on the volume. Three.js markers follow Kiln's camera.</p>
+      <p id="status" role="status">Loading…</p>
+      <p>Experimental camera-synchronized overlay. Depth-correct volume/mesh occlusion is not implemented.</p>
+    </section>
+  </div>
+  <script type="module" src="./main.js"></script>
+</body>
+</html>
