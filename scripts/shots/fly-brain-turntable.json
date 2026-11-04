@@ -1,4 +1,0 @@
-{
-  "url": "https://kilnrender.com/app/multichannel/?dataset=https%3A%2F%2Fd39zu0xtgv0613.cloudfront.net%2FFly-eFISH%2FNP01_1_1_SS00790_AstA546_CCHa1_647_1x_LOL.chunked.zarr%2F&up=-z&mode=mip&cam=0.390%2C4.230%2C2.087%2C-0.013%2C-0.016%2C0.060&channels=0%2C0%2C255%2C1.00%2C1%2C0.00%2C0.41%3B255%2C255%2C0%2C1.00%2C1%2C0.00%2C0.19%3B255%2C0%2C0%2C1.00%2C1%2C0.00%2C0.41%3B255%2C255%2C255%2C1.00%2C1%2C0.00%2C0.11&slice=960%2C960%2C376%2C1%2C1%2C1",
-  "seconds": 12
-}
