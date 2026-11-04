@@ -20,8 +20,9 @@
  * The turntable makes `turns` full turns around the URL's camera target and loops seamlessly.
  * Keyframes are passed through on a smooth curve, easing in and out.
  *
- * --base replaces the URL's origin and path and keeps its query, e.g. to render a production
- * Share link against `bun run dev` (http://localhost:3000/kiln-render/app/) or a PR preview.
+ * --base replaces the URL's origin and path up to /app/ and keeps the rest, e.g. to render a
+ * production Share link against `bun run dev` (http://localhost:3000/kiln-render/app/) or a PR
+ * preview (https://kilnrender.com/preview/<branch>/app/).
  *
  * Writes <out>/<name>.mp4, <name>.png (first frame, last for realtime) and <name>.json
  * (dataset, bytes, load milestones). Needs ffmpeg on the PATH. Chromium runs headed like the
@@ -197,7 +198,9 @@ async function main(): Promise<void> {
     const b = new URL(base);
     url.protocol = b.protocol;
     url.host = b.host;
-    url.pathname = b.pathname;
+    // Keep what follows /app/, e.g. multichannel/
+    const rest = url.pathname.split('/app/')[1] ?? '';
+    url.pathname = b.pathname.replace(/\/?$/, '/') + rest;
   }
   url.searchParams.set('capture', '1');
 
