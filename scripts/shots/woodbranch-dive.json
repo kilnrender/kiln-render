@@ -1,0 +1,16 @@
+{
+  "url": "https://kilnrender.com/app/?dataset=https%3A%2F%2Fome-zarr-scivis.s3.us-east-1.amazonaws.com%2Fv0.5%2F96x2%2Fwoodbranch.ome.zarr&mode=dvr&wc=0.06&ww=0.13&tf=grayscale&up=-y&cam=0.540%2C3.870%2C1.488%2C0.016%2C-0.003%2C-0.008",
+  "camera": "static",
+  "timing": "streaming",
+  "seconds": 16,
+  "stats": true,
+  "actions": [
+    { "at": 1, "until": 7, "cam": "0.350,4.800,0.700,0.016,-0.003,-0.008" },
+    { "at": 10, "set": { "mode": "lod" } }
+  ],
+  "captions": [
+    { "from": 0, "to": 3.5, "text": "16 GB of µCT in a browser tab" },
+    { "from": 4, "to": 9.5, "text": "Only the bricks in view are streamed" },
+    { "from": 10, "to": 16, "text": "Colour = resolution level of each brick" }
+  ]
+}
