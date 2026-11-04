@@ -1,0 +1,6 @@
+{
+  "url": "https://kilnrender.com/app/?dataset=https%3A%2F%2Fome-zarr-scivis.s3.us-east-1.amazonaws.com%2Fv0.5%2F96x2%2Fkingsnake.ome.zarr&mode=mip&wc=0.39&ww=0.37&tf=hot&tfpts=0.00%2C0.00%2C0.25%2C0.00%2C1.00%2C1.00&up=y&cam=0.240%2C-0.940%2C0.838%2C0.041%2C0.016%2C0.114",
+  "camera": "static",
+  "timing": "realtime",
+  "seconds": 15
+}

@@ -26,6 +26,7 @@ import { parseLabelParam, writeLabelParam } from '../../shared/label-params.js';
 import { mountTopBar } from '../../shared/top-bar.js';
 import { trackEvent, trackDataset, trackRenderMode } from '../../shared/analytics.js';
 import { maybeRunBench } from '../../shared/bench.js';
+import { maybeInstallCapture } from '../../shared/capture.js';
 import { mountQuadLayout, mountLayoutButton, parsePaneModes } from '../../shared/quad-layout.js';
 import '../../shared/viewer-shell.css';
 import '../../shared/controls/controls.css';
@@ -227,6 +228,8 @@ async function main() {
 
   // Fetch-pattern benchmark — no-op unless ?bench=1 (see examples/shared/bench.ts).
   void maybeRunBench(viewer);
+  // Video capture hook for scripts/capture.ts — no-op unless ?capture=1
+  maybeInstallCapture(viewer);
 
   // Front, side and top panes around the 3D view: ?layout=quad, the top-bar button or Q
   const quad = mountQuadLayout(viewer, canvas, { modes: urlParams.paneModes, active: urlParams.quad, embed: IS_EMBED });
