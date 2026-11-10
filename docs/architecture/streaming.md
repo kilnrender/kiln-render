@@ -33,6 +33,14 @@ While the camera moves, the set is still recomputed so stale requests are cancel
 
 With several views (`KilnEngine.addView()`) the set is the union over the views: each is traversed with its own camera, a brick that more than one view needs is queued once at its nearest distance, and new requests wait while any view moves.
 
+## Coarse-to-fine refinement
+
+Experimental, `?c2f=1`.
+
+By default only the bricks at their target level are requested, nearest first. After a jump of several levels (opening a large dataset, a fast zoom) the view keeps showing the old coarse level until those bricks arrive, and each of them costs as much as eight of the level above.
+
+With coarse-to-fine, every brick on the way from what is loaded to the target is requested as well, and the queue is ordered by level, coarsest first, then by distance. The whole view sharpens in waves, each wave eight times the size of the one before (four where a level only halves X and Y). A brick on the way stays desired, and so is kept in the atlas, until everything below it is resident or empty. The extra bricks add up to a seventh of the target bricks at most (a third for XY-only levels).
+
 ## Base load
 
 The coarsest level is loaded completely and pinned before any refinement. Its order is tuned for time to first image:

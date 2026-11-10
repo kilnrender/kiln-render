@@ -264,6 +264,9 @@ export class StreamingManager {
   private rayGuided = false;
   private rayViews: RayView[] = [];
 
+  // Coarse-to-fine refinement (?c2f=1): see enableCoarseToFine()
+  private coarseToFine = false;
+
   // Throttle updates (don't recompute every frame)
   private lastUpdateFrame = -1;
   private updateInterval = 10; // frames between full updates
@@ -848,6 +851,16 @@ export class StreamingManager {
     this.rayViews = [];
   }
 
+  /**
+   * Coarse-to-fine refinement: a region more than one level away from its target is refined
+   * level by level. Every brick on the way that is not resident is requested too, coarsest
+   * first, so the whole view sharpens in waves instead of staying at the old level until its
+   * final bricks arrive. A stepping stone is dropped once everything below it is shown.
+   */
+  enableCoarseToFine(): void {
+    this.coarseToFine = true;
+  }
+
   /** Ray guidance state of view `view`; null when guidance is off. */
   private rayView(view: number): RayView | null {
     if (!this.rayGuided) return null;
@@ -1040,22 +1053,23 @@ export class StreamingManager {
     const desiredBricks: BrickRequest[] = [];
     const desiredIndex = new Map<string, number>();
 
-    // Recursive traversal function
-    const traverse = (bx: number, by: number, bz: number, lod: number): void => {
+    // Recursive traversal function. Returns whether the brick's region already shows all it
+    // should: nothing below it is still missing (coarse-to-fine requests it otherwise).
+    const traverse = (bx: number, by: number, bz: number, lod: number): boolean => {
       const level = this.levelsByLod[lod];
-      if (!level) return;
+      if (!level) return true;
 
       const [gridX, gridY, gridZ] = level.brickGrid;
 
       // Bounds check - handles non-power-of-two grids
-      if (bx < 0 || bx >= gridX || by < 0 || by >= gridY || bz < 0 || bz >= gridZ) return;
+      if (bx < 0 || bx >= gridX || by < 0 || by >= gridY || bz < 0 || bz >= gridZ) return true;
 
       // Get brick AABB
       const aabb = this.getBrickAABB(bx, by, bz, lod);
 
       // Frustum culling
       if (!isAABBInFrustum(aabb.min, aabb.max, frustum)) {
-        return;
+        return true;
       }
 
       // Distance check
@@ -1086,14 +1100,14 @@ export class StreamingManager {
         const finerLevel = this.levelsByLod[lod - 1];
         if (!finerLevel) {
           // No finer LOD available, use current
-          this.addDesiredBrick(desiredBricks, bx, by, bz, lod, dist);
-          return;
+          return this.addDesiredBrick(desiredBricks, bx, by, bz, lod, dist);
         }
 
         // Children per axis follow the level model (1 or 2); bounds-check at the finer grid
         const [finerGridX, finerGridY, finerGridZ] = finerLevel.brickGrid;
         const nextLod = lod - 1;
         const [nx, ny, nz] = this.config.childCounts(lod);
+        let covered = true;
 
         for (let dz = 0; dz < nz; dz++) {
           for (let dy = 0; dy < ny; dy++) {
@@ -1104,38 +1118,42 @@ export class StreamingManager {
 
               // Only traverse if within finer grid bounds
               if (cx < finerGridX && cy < finerGridY && cz < finerGridZ) {
-                traverse(cx, cy, cz, nextLod);
+                if (!traverse(cx, cy, cz, nextLod)) covered = false;
               }
             }
           }
         }
-      } else {
-        this.addDesiredBrick(desiredBricks, bx, by, bz, lod, dist);
+        // A stepping stone: shown until the bricks below it have arrived (the base level is always there)
+        if (!covered && this.coarseToFine && lod < maxLod) this.addDesiredBrick(desiredBricks, bx, by, bz, lod, dist);
+        return covered;
       }
+      return this.addDesiredBrick(desiredBricks, bx, by, bz, lod, dist);
     };
 
-    // Helper to add a brick to desired set
+    // Helper to add a brick to desired set; returns whether nothing is left to load for it
     const rayCulledKeys = new Set<string>();
     this.addDesiredBrick = (bricks: BrickRequest[], bx: number, by: number, bz: number, lod: number, dist: number) => {
       const key = `lod${lod}:${bz}/${by}/${bx}`;
 
       // Check if known empty
       if (this.emptyBricks.has(key)) {
-        return;
+        return true;
       }
 
       if (this.rayCulls(bx, by, bz, lod, viewIndex)) {
         rayCulledKeys.add(key);
-        return;
+        return true;
       }
 
+      const resident = this.loadedBricks.has(key);
       const existing = desiredIndex.get(key);
       if (existing !== undefined) {
         bricks[existing]!.distance = Math.min(bricks[existing]!.distance, dist);
-        return;
+        return resident;
       }
       desiredIndex.set(key, bricks.length);
       bricks.push({ lod, bx, by, bz, distance: dist, key });
+      return resident;
     };
 
     for (const [index, view] of views.entries()) {
@@ -1221,8 +1239,8 @@ export class StreamingManager {
       b => !this.loadedBricks.has(b.key) && !this.inFlightRequests.has(b.key)
     );
 
-    // Sort by distance (closest first)
-    missingBricks.sort((a, b) => a.distance - b.distance);
+    // Closest first; coarse-to-fine loads level by level, coarsest first
+    missingBricks.sort((a, b) => (this.coarseToFine ? b.lod - a.lod : 0) || a.distance - b.distance);
 
     // Limit queue size to prevent runaway loading
     // Only queue the closest N bricks
@@ -1254,7 +1272,7 @@ export class StreamingManager {
   }
 
   // Helper method reference (assigned in computeDesiredSet)
-  private addDesiredBrick: (bricks: BrickRequest[], bx: number, by: number, bz: number, lod: number, dist: number) => void = () => {};
+  private addDesiredBrick: (bricks: BrickRequest[], bx: number, by: number, bz: number, lod: number, dist: number) => boolean = () => true;
 
   /**
    * Process pending load requests (non-blocking)

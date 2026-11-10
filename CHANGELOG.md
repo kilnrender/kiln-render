@@ -6,6 +6,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Added
+- `?c2f=1` (experimental): coarse-to-fine refinement. When a view needs bricks several levels finer than what is loaded, the levels in between are loaded first, so the whole view sharpens in waves instead of staying coarse until the final bricks arrive.
+
 ## [0.6.1] - 2026-10-31
 
 ### Fixed

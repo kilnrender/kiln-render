@@ -539,6 +539,7 @@ export class KilnEngine {
       visibleChannelMask(this.renderer),
     );
     if (this.gpu.rayGuided) streamingManager.enableRayGuidance();
+    if (isFlagEnabled('c2f')) streamingManager.enableCoarseToFine();
     // When base LOD derives float/channel ranges, update renderer + metadata.
     streamingManager.setRangesDerivedCallback((opts) => {
       const renderer = this.renderer;
