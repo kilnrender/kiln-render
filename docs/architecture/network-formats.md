@@ -24,6 +24,14 @@ A brick whose `max` is below the empty threshold (set by data type and window) i
 
 `ZarrDataProvider` reads OME-Zarr with zarrita.js. Chunk boundaries don't match the brick grid, so a worker pool fetches the chunks a brick overlaps, decompresses them and cuts out the 66³ brick. There is no index of brick statistics: a brick is found empty after its first load, and isn't requested again.
 
+### Chunk hub
+
+Experimental, `?hub=1`.
+
+Each worker fetches the chunks of its bricks and keeps them decoded in its own cache. A chunk that bricks on different workers need (a ghost-border neighbour, a chunk larger than a brick) is requested by each of them. For whole chunk files the browser's HTTP cache usually answers the repeats. It does not for the Range requests of a sharded Zarr v3 store, or on hosts that forbid caching, and zarrita reads a shard's index once per chunk that asks before the first read has finished.
+
+With the hub, workers ask the main thread for chunk bytes. The hub runs one fetch per chunk (or byte range) however many workers wait for it, cancels it only when all of them have, and keeps the last 96 MB of compressed payloads for the workers that ask a moment later. Decoding and brick assembly stay in the workers.
+
 ## Network statistics
 
 The stats panel shows throughput (last 10 s), total bytes and request count. With `?bench=1`, the report also gives `chunkBytes` (downloaded chunk payloads) and `borderOnlyBytes` (payloads only a brick's ghost border needed so far). Shared shard indexes are left out of both, so the percentage refers to chunk payloads, not all traffic; payloads of cancelled bricks may be missing.

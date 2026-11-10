@@ -47,5 +47,6 @@ Not included in share links.
 | `bench=1` | Once streaming and accumulation have converged, logs a report (timings, bytes, bricks, GPU and cache memory with peaks) and sets `window.__KILN_BENCH_RESULT`. Options: `benchLabel`, `benchTimeout` (ms, default 120000), `benchStable` (polls, default 8), `report=<url>` to POST the JSON |
 | `benchSweep=1` | With `bench=1`: after the first convergence, orbits the camera once (`benchSweepMs`, default 6000) so eviction and the caches get exercised, then waits for convergence again and reports the bricks and bytes that took |
 | `rayguide=0` | Turns off [ray-guided brick selection](/architecture/streaming#ray-guided-selection), which is on by default |
+| `hub=1` | Experimental: chunk bytes are fetched on the main thread, once for all workers ([details](/architecture/network-formats#chunk-hub)). Mainly for sharded Zarr v3 stores and hosts that forbid caching |
 | `softreset=1` | Experimental fix for woodgrain while refining: brick commits keep part of the accumulated image and jitter is seeded per pixel ([details](/rendering/resolution-taa#jitter-and-accumulation)) |
 | `local=true` | Set by the viewer after opening a local directory; reopens it on reload |

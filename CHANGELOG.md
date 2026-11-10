@@ -6,6 +6,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Added
+- `?hub=1` (experimental): chunk bytes are fetched once for all workers instead of once per worker that needs them. On a sharded Zarr v3 store this halved the requests and cut the time to refine a view by 37–57 % over a slow link; stores of whole chunk files on cache-friendly hosts are unaffected.
+
 ## [0.6.1] - 2026-10-31
 
 ### Fixed

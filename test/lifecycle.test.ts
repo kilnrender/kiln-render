@@ -122,9 +122,12 @@ describe('worker pools settle pending work on terminate', () => {
     pool.pendingRequests = new Map([[1, { resolve: vi.fn(), reject }]]);
     pool.requestToWorker = new Map();
     pool.abortListeners = new Map();
+    const hubAbort = new AbortController();
+    pool.hubAborts = new Map([['0:1', hubAbort]]);
     pool.terminate();
     expect(reject).toHaveBeenCalledWith(expect.objectContaining({ name: 'AbortError' }));
     expect(pool.pendingRequests.size).toBe(0);
+    expect(hubAbort.signal.aborted).toBe(true);
   });
 
   it('DecompressionPool rejects pending requests with AbortError', () => {

@@ -12,6 +12,8 @@ import { TolerantFetchStore } from './tolerant-fetch-store.js';
 import { float32ToFloat16Bits, getUint16ToFloat16Lut } from '../utils/float16.js';
 import { SharedFetchRegistry } from './shared-fetch.js';
 import { computeBrickChunkFootprint, computeBrickCoreChunkRange, clampedLutEntry, chunkCoords, chunkLayout } from './chunk-math.js';
+import { HubStore } from './hub-store.js';
+import type { HubReply } from './hub-store.js';
 
 // Static codec imports — zarrita's dynamic imports fail in Vite dev workers.
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -80,6 +82,12 @@ export interface ZarrWorkerRequest {
    * can show what the one-voxel ghost border costs.
    */
   trackChunkBytes?: boolean;
+  /**
+   * For 'init' (?hub=1, read on the main thread): read chunk bytes through the main
+   * thread's ChunkHub instead of fetching them here, so workers never download the
+   * same chunk twice. See chunk-hub.ts.
+   */
+  hub?: boolean;
   /** Float normalisation range — voxel values are mapped from [floatMin, floatMax] → [0, 65535] */
   floatMin?: number;
   floatMax?: number;
@@ -188,7 +196,7 @@ function toDecodedChunk(chunk: { data: unknown; shape: number[]; stride: number[
 }
 
 // Store reference
-let workerStore: TolerantFetchStore | null = null;
+let workerStore: TolerantFetchStore | HubStore | null = null;
 
 // Cancellation state
 const cancelledRequests = new Set<number>();
@@ -224,7 +232,12 @@ function cacheSet(key: string, entry: DecodedChunk): void {
   cacheBytes += bytes;
 }
 
-self.onmessage = (event: MessageEvent<ZarrWorkerRequest>) => {
+self.onmessage = (message: MessageEvent<ZarrWorkerRequest | HubReply>) => {
+  if (message.data.type === 'hubData') {
+    if (workerStore instanceof HubStore) workerStore.handleReply(message.data);
+    return;
+  }
+  const event = message as MessageEvent<ZarrWorkerRequest>;
   const { type, id } = event.data;
 
   // Cancel messages are handled immediately — not queued.
@@ -269,7 +282,9 @@ self.onmessage = (event: MessageEvent<ZarrWorkerRequest>) => {
           console.log(`[ZarrWorker] Float32 normalization range: [${floatMin}, ${floatMax}]`);
         }
 
-        workerStore = new TolerantFetchStore(url!);
+        workerStore = event.data.hub
+          ? new HubStore(message => (self as unknown as Worker).postMessage(message))
+          : new TolerantFetchStore(url!);
         if (event.data.trackChunkBytes) workerStore.bytesByTag = new Map();
         const { arrayMetadata } = event.data;
         if (arrayMetadata && arrayMetadata.length === paths!.length) {

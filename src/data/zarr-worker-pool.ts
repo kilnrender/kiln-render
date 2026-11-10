@@ -8,6 +8,10 @@ import type { PipelineTimings } from './data-provider.js';
 import { RollingAvg } from './network-tracker.js';
 import { summarizeBorderBytes } from './chunk-math.js';
 import { isFlagEnabled } from '../core/feature-flags.js';
+import { ChunkHub } from './chunk-hub.js';
+import { TolerantFetchStore } from './tolerant-fetch-store.js';
+import type { HubRequest, HubReply } from './hub-store.js';
+import type { AbsolutePath } from 'zarrita';
 import ZarrChunkWorkerInline from './zarr-chunk-worker.ts?worker&inline';
 
 /** Dev: URL worker for Vite imports. Prod: pre-bundled inline worker. */
@@ -69,6 +73,13 @@ export class ZarrWorkerPool {
   /** Maps request ID → worker index, for routing cancel messages */
   private requestToWorker = new Map<number, number>();
 
+  // ?hub=1: chunk bytes are fetched here, once for all workers (see chunk-hub.ts)
+  private hub: ChunkHub | null = null;
+  private hubStore: TolerantFetchStore | null = null;
+  private hubAborts = new Map<string, AbortController>();
+  private hubLastBytes = 0;
+  private hubLastRequests = 0;
+
   /** Abort listeners to clean up on normal completion (prevents stale cancel messages) */
   private abortListeners = new Map<number, { signal: AbortSignal; listener: () => void }>();
 
@@ -97,13 +108,23 @@ export class ZarrWorkerPool {
     this.lodParams = lodParams;
     this.logicalBrickSize = logicalBrickSize;
     const initPromises: Promise<void>[] = [];
+    if (isFlagEnabled('hub')) {
+      this.hubStore = new TolerantFetchStore(url);
+      if (isFlagEnabled('bench')) this.hubStore.bytesByTag = new Map();
+      this.hub = new ChunkHub(this.hubStore);
+    }
 
     for (let i = 0; i < this.poolSize; i++) {
       const worker = createWorker();
       this.workerLastBytes[i] = 0;
       this.workerLastRequests[i] = 0;
 
-      worker.onmessage = (event: MessageEvent<ZarrWorkerResponse>) => {
+      worker.onmessage = (message: MessageEvent<ZarrWorkerResponse | HubRequest>) => {
+        if (message.data.type === 'hubGet' || message.data.type === 'hubCancel') {
+          this.handleHubRequest(worker, i, message.data);
+          return;
+        }
+        const event = message as MessageEvent<ZarrWorkerResponse>;
         const { type: msgType, id, error, data, min, max, avg, rawMin, rawMax, fetchMs, assemblyMs, queueMs, chunkHits, chunkTotal, chunkStoreBytes, chunkStoreRequests, chunkCacheBytes, chunkCacheBudget, coreChunkKeys, fetchedChunkBytes } = event.data;
         const pending = this.pendingRequests.get(id);
         if (!pending) return;
@@ -144,7 +165,13 @@ export class ZarrWorkerPool {
           // loadBrick calls overlap on the same worker.
           let chunkBytesFetched: number | undefined;
           let chunkRequestsIssued: number | undefined;
-          if (chunkStoreBytes !== undefined && chunkStoreRequests !== undefined) {
+          if (this.hubStore) {
+            // One store for all workers: everything fetched since the previous brick
+            chunkBytesFetched = this.hubStore.bytesFetched - this.hubLastBytes;
+            chunkRequestsIssued = this.hubStore.requestCount - this.hubLastRequests;
+            this.hubLastBytes = this.hubStore.bytesFetched;
+            this.hubLastRequests = this.hubStore.requestCount;
+          } else if (chunkStoreBytes !== undefined && chunkStoreRequests !== undefined) {
             chunkBytesFetched = Math.max(0, chunkStoreBytes - (this.workerLastBytes[i] ?? 0));
             chunkRequestsIssued = Math.max(0, chunkStoreRequests - (this.workerLastRequests[i] ?? 0));
             this.workerLastBytes[i] = chunkStoreBytes;
@@ -192,6 +219,7 @@ export class ZarrWorkerPool {
           // can't read the page URL itself. See docs/audits/kiln-render - fetch_patterns.md.
           refcountedAborts: isFlagEnabled('p4'),
           trackChunkBytes: isFlagEnabled('bench'),
+          hub: this.hub !== null,
         };
         worker.postMessage(req);
       });
@@ -199,6 +227,33 @@ export class ZarrWorkerPool {
     }
 
     await Promise.all(initPromises);
+  }
+
+  /** A worker's chunk read (?hub=1): fetch through the hub and send that worker its own copy. */
+  private handleHubRequest(worker: Worker, workerIndex: number, request: HubRequest): void {
+    const id = `${workerIndex}:${request.hid}`;
+    if (request.type === 'hubCancel') {
+      this.hubAborts.get(id)?.abort();
+      this.hubAborts.delete(id);
+      return;
+    }
+    const abort = new AbortController();
+    this.hubAborts.set(id, abort);
+    const reply = (fields: Omit<HubReply, 'type' | 'hid'>, transfer: Transferable[] = []) => {
+      if (!this.hubAborts.delete(id)) return; // cancelled, or the pool was terminated
+      worker.postMessage({ type: 'hubData', hid: request.hid, ...fields } satisfies HubReply, transfer);
+    };
+    this.hub!.fetch(request.key as AbsolutePath, request.range, abort.signal, request.tag).then(
+      (bytes) => {
+        if (!bytes) return reply({});
+        // The payload is shared with other workers and the hub's cache: transfer a copy
+        const copy = bytes.slice().buffer;
+        reply({ data: copy }, [copy]);
+      },
+      (e: unknown) => reply(e instanceof DOMException && e.name === 'AbortError'
+        ? { aborted: true }
+        : { error: e instanceof Error ? e.message : 'Chunk fetch failed' }),
+    );
   }
 
   /**
@@ -331,7 +386,9 @@ export class ZarrWorkerPool {
       chunkCacheHitRatio: this.chunkReqTotal > 0 ? this.chunkHitTotal / this.chunkReqTotal : 0,
       chunkCacheBytes: this.workerCacheBytes.reduce((a, b) => a + b, 0),
       chunkCacheMaxBytes: this.workerCacheBudget.reduce((a, b) => a + b, 0),
-      ...(this.bytesByChunk.size > 0 ? summarizeBorderBytes(this.bytesByChunk, this.coreChunks) : {}),
+      ...(this.hubStore?.bytesByTag?.size
+        ? summarizeBorderBytes(this.hubStore.bytesByTag, this.coreChunks)
+        : this.bytesByChunk.size > 0 ? summarizeBorderBytes(this.bytesByChunk, this.coreChunks) : {}),
     };
   }
 
@@ -345,5 +402,7 @@ export class ZarrWorkerPool {
     this.pendingRequests.clear();
     this.requestToWorker.clear();
     this.abortListeners.clear();
+    for (const abort of this.hubAborts.values()) abort.abort();
+    this.hubAborts.clear();
   }
 }
