@@ -101,6 +101,8 @@ export interface BenchReport {
   numChannels: number;
   /** ms from navigation start to converged (the headline number). */
   convergeMs: number;
+  /** ms until every desired brick was resident, borders of `?lazyborder=1` possibly still pending; null if never. */
+  allBricksShownMs: number | null;
   /** Same origin as convergeMs; null if never reached. See LoadMilestones. */
   firstContentSubmitMs: number | null;
   firstContentFrameMs: number | null;
@@ -158,12 +160,17 @@ class PeakTracker {
  * `stablePolls` consecutive polls (debounce: a transient `pendingCount===0`
  * mid-stream doesn't count). Returns whether it settled before the timeout.
  */
-async function waitForConverged(v: BenchViewer, peaks: PeakTracker, timeoutMs: number, stablePolls: number): Promise<boolean> {
+async function waitForConverged(v: BenchViewer, peaks: PeakTracker, timeoutMs: number, stablePolls: number, shown?: { at: number | null }): Promise<boolean> {
   const deadline = performance.now() + timeoutMs;
   let stable = 0;
   while (performance.now() < deadline) {
     peaks.sample(v.getMemoryStats());
     const s = v.streamingManager.getStats();
+    if (shown) {
+      // Start of the last stretch in which nothing desired was missing
+      const complete = v.streamingManager.baseLodLoaded && s.desiredCount > 0 && s.loadedCount >= s.desiredCount;
+      shown.at = complete ? shown.at ?? performance.now() : null;
+    }
     const idle = s.pendingCount === 0 && v.streamingManager.baseLodLoaded && v.renderer.isConverged;
     stable = idle ? stable + 1 : 0;
     if (stable >= stablePolls) return true;
@@ -224,6 +231,7 @@ function formatReport(r: BenchReport): string {
     `${pad('setup')}open ${ms(m.datasetOpenStart)} · device ${ms(m.deviceReady)} · metadata ${ms(m.metadataReady)} · gpu ${ms(m.gpuReady)}`,
     `${pad('first content')}submit ${ms(r.firstContentSubmitMs)} · frame ${ms(r.firstContentFrameMs)}`,
     `${pad('base coverage')}50% ${ms(m.baseCoverage50)} · 90% ${ms(m.baseCoverage90)} · done ${ms(r.baseCompleteMs)}`,
+    `${pad('all bricks shown')}${ms(r.allBricksShownMs)}`,
     `${pad('requests')}${r.requestCount}`,
     `${pad('downloaded')}${mb(r.bytesDownloaded)} MB`,
     `${pad('bricks')}dispatched ${r.bricksDispatched} · committed ${r.bricksCommitted} · cancelled ${r.bricksCancelled} · discarded ${r.bricksDiscarded}`,
@@ -259,7 +267,8 @@ export async function maybeRunBench(viewer: BenchViewer): Promise<void> {
   const reportUrl = params.get('report');
   const peaks = new PeakTracker();
 
-  const settled = await waitForConverged(viewer, peaks, timeoutMs, stablePolls);
+  const shown = { at: null as number | null };
+  const settled = await waitForConverged(viewer, peaks, timeoutMs, stablePolls, shown);
   // performance.now() is ms since page navigation start, so this is the full
   // open→converge wall-clock (WebGPU init + metadata + base load + refinement).
   const convergeMs = performance.now();
@@ -289,6 +298,7 @@ export async function maybeRunBench(viewer: BenchViewer): Promise<void> {
     dataset: viewer.metadata.name,
     numChannels: viewer.renderer.numChannels,
     convergeMs,
+    allBricksShownMs: shown.at,
     firstContentSubmitMs: m.firstContentSubmit,
     firstContentFrameMs: m.firstContentFrame,
     baseCompleteMs: m.baseComplete,

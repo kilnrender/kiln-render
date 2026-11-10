@@ -29,6 +29,8 @@ export interface BrickResult {
   rawMin?: number;
   /** Raw-space max (float datasets only) */
   rawMax?: number;
+  /** The ghost border repeats core voxels (coreOnly load) */
+  partialBorder?: boolean;
   /** Real network bytes fetched for this brick's chunks (delta since this worker's previous response). */
   chunkBytesFetched?: number;
   /** Real HTTP requests issued for this brick's chunks (delta since this worker's previous response). */
@@ -65,6 +67,8 @@ export class ZarrWorkerPool {
   /** Stored from init() for spatial worker routing (see workerIndexFor). */
   private lodParams: ZarrWorkerRequest['lodParams'] = [];
   private logicalBrickSize = 64;
+  // ?lazyborder=1: bricks sharing a core chunk go to the same worker (see workerIndexFor)
+  private routeByCore = isFlagEnabled('lazyborder');
 
   /** Maps request ID → worker index, for routing cancel messages */
   private requestToWorker = new Map<number, number>();
@@ -104,7 +108,7 @@ export class ZarrWorkerPool {
       this.workerLastRequests[i] = 0;
 
       worker.onmessage = (event: MessageEvent<ZarrWorkerResponse>) => {
-        const { type: msgType, id, error, data, min, max, avg, rawMin, rawMax, fetchMs, assemblyMs, queueMs, chunkHits, chunkTotal, chunkStoreBytes, chunkStoreRequests, chunkCacheBytes, chunkCacheBudget, coreChunkKeys, fetchedChunkBytes } = event.data;
+        const { type: msgType, id, error, data, min, max, avg, rawMin, rawMax, partialBorder, fetchMs, assemblyMs, queueMs, chunkHits, chunkTotal, chunkStoreBytes, chunkStoreRequests, chunkCacheBytes, chunkCacheBudget, coreChunkKeys, fetchedChunkBytes } = event.data;
         const pending = this.pendingRequests.get(id);
         if (!pending) return;
         this.pendingRequests.delete(id);
@@ -160,6 +164,7 @@ export class ZarrWorkerPool {
             avg: avg ?? 0,
             rawMin,
             rawMax,
+            partialBorder,
             chunkBytesFetched,
             chunkRequestsIssued,
           } as BrickResult);
@@ -233,8 +238,10 @@ export class ZarrWorkerPool {
     const params = this.lodParams?.[lod];
     if (!params || this.workers.length === 0) return -1;
     const { scaleX, scaleY, scaleZ, csx, csy, csz } = params;
+    // First chunk of the footprint (with the ghost border), or of the core when bricks load core-first
+    const border = this.routeByCore ? 0 : 1;
     const minChunk = (b: number, scale: number, cs: number): number =>
-      Math.floor(Math.max(0, Math.floor(Math.max(0, b * this.logicalBrickSize - 1) * scale)) / cs);
+      Math.floor(Math.max(0, Math.floor(Math.max(0, b * this.logicalBrickSize - border) * scale)) / cs);
     return this.workerIndexForChunk(lod, minChunk(bx, scaleX, csx), minChunk(by, scaleY, csy), minChunk(bz, scaleZ, csz), channelIndex);
   }
 
@@ -253,7 +260,7 @@ export class ZarrWorkerPool {
   }
 
   /** Load a 66³ brick, routed to a worker by spatial+channel footprint. Supports AbortSignal cancellation. */
-  loadBrick(lod: number, bx: number, by: number, bz: number, channelIndex = 0, signal?: AbortSignal, timepoint?: number): Promise<BrickResult> {
+  loadBrick(lod: number, bx: number, by: number, bz: number, channelIndex = 0, signal?: AbortSignal, timepoint?: number, coreOnly?: boolean): Promise<BrickResult> {
     return new Promise((resolve, reject) => {
       const id = this.requestId++;
       let workerIdx = this.workerIndexFor(lod, bx, by, bz, channelIndex);
@@ -268,7 +275,7 @@ export class ZarrWorkerPool {
 
       // Date.now(), not performance.now() — the worker diffs this against its
       // own clock, and only Date.now() shares an epoch across the worker boundary.
-      const req: ZarrWorkerRequest = { type: 'loadBrick', id, lod, bx, by, bz, channelIndex, timepoint, dispatchTime: Date.now() };
+      const req: ZarrWorkerRequest = { type: 'loadBrick', id, lod, bx, by, bz, channelIndex, timepoint, coreOnly, dispatchTime: Date.now() };
       worker.postMessage(req);
 
       if (signal) {

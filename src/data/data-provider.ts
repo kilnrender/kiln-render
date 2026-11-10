@@ -38,6 +38,21 @@ export interface BrickLoadResult {
   rawMin?: number;
   /** Raw-space max (float datasets only — before normalisation to [0, 65535]) */
   rawMax?: number;
+  /**
+   * The one-voxel ghost border repeats the brick's own outermost voxels where it lies in chunks
+   * that were not fetched (see BrickLoadOptions.coreOnly). Load the brick again without
+   * `coreOnly` for the real border.
+   */
+  partialBorder?: boolean;
+}
+
+export interface BrickLoadOptions {
+  /**
+   * Fetch only the chunks the brick's 64³ core overlaps. Chunks that only the ghost border
+   * reaches are used if they are at hand, otherwise the border repeats the nearest core voxel
+   * and the result says `partialBorder`. Providers may ignore this and load the full brick.
+   */
+  coreOnly?: boolean;
 }
 
 /**
@@ -196,7 +211,7 @@ export interface DataProvider {
   getBrickGrid(lod: number): [number, number, number];
 
   /** Load a single brick's voxel data with inline statistics. */
-  loadBrick(lod: number, bx: number, by: number, bz: number, channelIndex?: number, signal?: AbortSignal): Promise<BrickLoadResult | null>;
+  loadBrick(lod: number, bx: number, by: number, bz: number, channelIndex?: number, signal?: AbortSignal, options?: BrickLoadOptions): Promise<BrickLoadResult | null>;
 
   /**
    * Relative cost of loading one brick, e.g. the number of source chunks it

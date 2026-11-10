@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Added
+- `?lazyborder=1` (experimental): refined bricks are shown as soon as their own chunks have arrived, and their one-voxel border is filled in from the neighbouring chunks afterwards. On OME-Zarr with 64³ or 128³ chunks, the detail of a view arrives about three times sooner over a slow link; the total download is unchanged.
+- `?bench=1` reports *all bricks shown*: when every desired brick was resident.
+
 ## [0.6.1] - 2026-10-31
 
 ### Fixed

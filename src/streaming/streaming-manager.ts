@@ -8,7 +8,7 @@ import { extractFrustumPlanes, isAABBInFrustum } from '../core/camera.js';
 import { isOrthographic, type ViewParams } from '../core/view.js';
 import { upsampleFromAncestor } from './placeholder.js';
 import type { VolumeResources } from '../core/volume-resources.js';
-import type { DataProvider, VolumeMetadata, BrickLoadResult, LodLevel } from '../data/data-provider.js';
+import type { DataProvider, VolumeMetadata, BrickLoadResult, BrickLoadOptions, LodLevel } from '../data/data-provider.js';
 import { AtlasSlot } from './atlas-allocator.js';
 import type { AllocationResult } from './atlas-allocator.js';
 import { BrickCache } from './brick-cache.js';
@@ -102,6 +102,8 @@ export interface StreamingStats {
   avgBrickLatencyMs: number;
   // Bricks left out of the last desired set because no ray reached them
   rayCulledCount: number;
+  // Resident bricks whose ghost border still repeats core voxels (lazy borders)
+  partialBorderCount: number;
 }
 
 /** Brick coordinates from a `lod{L}:{z}/{y}/{x}` key. */
@@ -258,11 +260,18 @@ export class StreamingManager {
     bricksFailed: 0,
     avgBrickLatencyMs: 0,
     rayCulledCount: 0,
+    partialBorderCount: 0,
   };
 
   // Ray-guided brick selection, one entry per view (created on first use); off with ?rayguide=0
   private rayGuided = false;
   private rayViews: RayView[] = [];
+
+  // Lazy ghost borders (?lazyborder=1), see enableLazyBorders(): resident bricks whose border
+  // repeats core voxels, and those of them the current view wants completed (nearest first)
+  private loadOptions: BrickLoadOptions | undefined;
+  private partialBorders = new Set<string>();
+  private borderQueue: BrickRequest[] = [];
 
   // Throttle updates (don't recompute every frame)
   private lastUpdateFrame = -1;
@@ -848,6 +857,17 @@ export class StreamingManager {
     this.rayViews = [];
   }
 
+  /**
+   * Lazy ghost borders: a refined brick is first loaded from the chunks its 64³ core overlaps
+   * and shown with its outermost voxels repeated in the one-voxel border. The chunks that only
+   * the border reaches (up to 26 of 27 when chunks match the brick grid) are fetched once no
+   * brick is missing any more, and the brick is uploaded again with its real border. Until then
+   * interpolation across that brick's faces is slightly off. The base level always loads in full.
+   */
+  enableLazyBorders(): void {
+    this.loadOptions = { coreOnly: true };
+  }
+
   /** Ray guidance state of view `view`; null when guidance is off. */
   private rayView(view: number): RayView | null {
     if (!this.rayGuided) return null;
@@ -970,6 +990,8 @@ export class StreamingManager {
     this.emptyBricks.clear();
     this.desiredKeys.clear();
     this.loadQueue = [];
+    this.borderQueue = [];
+    this.partialBorders.clear();
     this.allocationStalled = false;
     this.baseLodPending = 0;
     this.baseLodLoaded = false;
@@ -980,6 +1002,7 @@ export class StreamingManager {
     this.resources.allocator.free(slot);
     this.loadedBricks.delete(key);
     this.pinnedBricks.delete(key);
+    this.partialBorders.delete(key);
   }
 
   /** Occupancy and hit rate of the CPU brick cache. */
@@ -996,6 +1019,7 @@ export class StreamingManager {
     return {
       ...this.lastStats,
       pendingCount: this.lastStats.pendingCount + this.baseLodPending + this.fillPending,
+      partialBorderCount: this.partialBorders.size,
       totalBytesDownloaded: networkStats.totalBytesDownloaded,
       bytesPerSecond: networkStats.recentBytesPerSecond,
       requestCount: networkStats.requestCount,
@@ -1228,11 +1252,16 @@ export class StreamingManager {
     // Only queue the closest N bricks
     this.loadQueue = missingBricks.slice(0, this.maxDesiredBricks);
 
+    // Resident bricks of this view that still wait for their real border
+    this.borderQueue = this.partialBorders.size === 0 ? [] : desiredBricks
+      .filter(b => this.partialBorders.has(b.key) && this.loadedBricks.has(b.key) && !this.inFlightRequests.has(b.key))
+      .sort((a, b) => a.distance - b.distance);
+
     // Update stats (network stats and timing are fetched live in getStats())
     this.lastStats = {
       desiredCount: desiredBricks.length,
       loadedCount,
-      pendingCount: this.loadQueue.length + this.inFlightRequests.size,
+      pendingCount: this.loadQueue.length + this.borderQueue.length + this.inFlightRequests.size,
       cancelledCount,
       atlasUsage: this.resources.allocator.usedCount,
       atlasCapacity: this.resources.allocator.totalSlots,
@@ -1250,6 +1279,7 @@ export class StreamingManager {
       bricksFailed: 0,
       avgBrickLatencyMs: 0,
       rayCulledCount: rayCulled,
+      partialBorderCount: 0,
     };
   }
 
@@ -1260,6 +1290,24 @@ export class StreamingManager {
    * Process pending load requests (non-blocking)
    */
   private processLoadQueue(): void {
+    // Borders are completed once no brick is missing (or none can get a slot right now)
+    while (
+      (this.loadQueue.length === 0 || this.allocationStalled) &&
+      this.inFlightRequests.size < this.maxConcurrentRequests &&
+      this.borderQueue.length > 0
+    ) {
+      const request = this.borderQueue.shift()!;
+      const entry = this.loadedBricks.get(request.key);
+      if (!entry || !this.partialBorders.has(request.key) || !this.desiredKeys.has(request.key)) continue;
+      if (this.inFlightRequests.has(request.key)) continue;
+
+      const controller = new AbortController();
+      this.inFlightRequests.set(request.key, controller);
+      this.completeBorder(request, entry.slotIndex, controller.signal).finally(() => {
+        if (this.inFlightRequests.get(request.key) === controller) this.inFlightRequests.delete(request.key);
+      });
+    }
+
     // an allocation was refused since the last desired-set
     // recompute — don't burn network/worker time on bricks that can't get a
     // slot. computeDesiredSet clears the flag (retry point).
@@ -1303,6 +1351,28 @@ export class StreamingManager {
         this.dispatchTimestamps.delete(request.key);
       });
     }
+  }
+
+  /** Load a resident brick again in full and upload it over its replicated border. */
+  private async completeBorder(request: BrickRequest, slotIndex: number, signal: AbortSignal): Promise<void> {
+    const { lod, bx, by, bz, key } = request;
+    const have = this.slotChannels.get(slotIndex) ?? 0;
+    const channels = this.channelsToLoad().filter(ch => (have >> ch) & 1);
+    if (channels.length === 0) return;
+    const results = await Promise.all(channels.map(ch => this.dataProvider.loadBrick(lod, bx, by, bz, ch, signal)));
+    // A failed channel leaves the brick as it is; a later desired set queues it again
+    if (signal.aborted || results.some(r => !r)) return;
+    const entry = this.loadedBricks.get(key);
+    if (!entry || entry.slotIndex !== slotIndex) return; // evicted or reloaded meanwhile
+
+    channels.forEach((ch, i) => {
+      const data = results[i]!.data;
+      this.brickCache.put(this.cacheKey(ch, key), data);
+      // A channel hidden or replaced meanwhile keeps what it has
+      if (((this.slotChannels.get(slotIndex) ?? 0) >> ch) & 1) this.writeSlotChannel(slotIndex, entry.slot, ch, data);
+    });
+    this.partialBorders.delete(key);
+    this.notifyContentChanged();
   }
 
   /**
@@ -1350,7 +1420,7 @@ export class StreamingManager {
           channelResults[ch] = { data: cached, min: 0, max: 1, avg: 0 } as BrickLoadResult;
           return;
         }
-        channelResults[ch] = await this.dataProvider.loadBrick(lod, bx, by, bz, ch, signal);
+        channelResults[ch] = await this.dataProvider.loadBrick(lod, bx, by, bz, ch, signal, this.loadOptions);
       })
     );
     if (signal.aborted) return;
@@ -1378,9 +1448,10 @@ export class StreamingManager {
     // brick is known non-empty — now it's worth caching. (Done before the
     // desired-set check: a brick fetched but no longer desired is still likely
     // to be desired again soon.)
+    // A brick with a replicated border is cached once it is complete (completeBorder)
     for (let ch = 0; ch < numChannels; ch++) {
       const r = channelResults[ch];
-      if (r && !fromCache[ch]) {
+      if (r && !fromCache[ch] && !r.partialBorder) {
         this.brickCache.put(this.cacheKey(ch, key), r.data);
       }
     }
@@ -1426,6 +1497,8 @@ export class StreamingManager {
     // Track
     this.loadedBricks.set(key, { slot: result.slot, slotIndex: result.slotIndex });
     this.bricksCommitted++;
+    if (channelResults.some(r => r?.partialBorder)) this.partialBorders.add(key);
+    else this.partialBorders.delete(key);
 
     // A channel shown while this fetch was in flight is not in loadChannels: backfill it.
     const missing = this.visibleMask & ~(this.slotChannels.get(result.slotIndex) ?? 0) & ((1 << numChannels) - 1);
@@ -1459,6 +1532,11 @@ export class StreamingManager {
 
     const hasSignal = (ch: number) => !!results[ch] && (fromCache[ch] || results[ch]!.max >= threshold);
     const owns = () => slot !== null && this.loadedBricks.get(key)?.slotIndex === slot.slotIndex;
+    // Lazy borders: the brick waits for its real border while any channel shown has a replicated one
+    const markBorder = () => {
+      if (results.some(r => r?.partialBorder)) this.partialBorders.add(key);
+      else this.partialBorders.delete(key);
+    };
 
     const commit = (placeholders: Map<number, Uint8Array | Uint16Array>): void => {
       const result = this.resources.allocator.allocate(this.frameCount);
@@ -1492,6 +1570,7 @@ export class StreamingManager {
       this.resources.allocator.setMetadata(result.slotIndex, { lod, bx, by, bz, key });
       this.loadedBricks.set(key, { slot: result.slot, slotIndex: result.slotIndex });
       this.bricksCommitted++;
+      markBorder();
       const dispatchTime = this.dispatchTimestamps.get(key);
       if (dispatchTime !== undefined) this.brickLatencyAvg.add(performance.now() - dispatchTime);
       this.notifyContentChanged();
@@ -1518,7 +1597,7 @@ export class StreamingManager {
         fromCache[ch] = true;
         r = { data: cached, min: 0, max: 1, avg: 0 };
       } else {
-        r = await this.dataProvider.loadBrick(lod, bx, by, bz, ch, signal);
+        r = await this.dataProvider.loadBrick(lod, bx, by, bz, ch, signal, this.loadOptions);
       }
       if (signal.aborted) return;
       results[ch] = r;
@@ -1526,6 +1605,7 @@ export class StreamingManager {
       if (slot) {
         if (r && owns()) {
           this.writeSlotChannel(slot.slotIndex, slot.slot, ch, r.data);
+          markBorder();
           this.notifyContentChanged();
         }
       } else {
@@ -1559,7 +1639,7 @@ export class StreamingManager {
     }
     for (const ch of loadChannels) {
       const r = results[ch];
-      if (r && !fromCache[ch]) this.brickCache.put(this.cacheKey(ch, key), r.data);
+      if (r && !fromCache[ch] && !r.partialBorder) this.brickCache.put(this.cacheKey(ch, key), r.data);
     }
     if (!slot && !gaveUp) {
       if (!this.desiredKeys.has(key)) { this.bricksDiscarded++; return; }
@@ -1624,6 +1704,7 @@ export class StreamingManager {
           );
         }
         this.loadedBricks.delete(evictedKey);
+        this.partialBorders.delete(evictedKey);
       }
 
     }

@@ -9,7 +9,7 @@ import { TolerantFetchStore } from './tolerant-fetch-store.js';
 import { ZarrWorkerPool } from './zarr-worker-pool.js';
 import { BaseZarrProvider, detectCompression, v3CompressionLabel } from './base-zarr-provider.js';
 import type { OmeMultiscales } from './base-zarr-provider.js';
-import type { VolumeMetadata, BrickLoadResult, PipelineTimings } from './data-provider.js';
+import type { VolumeMetadata, BrickLoadResult, BrickLoadOptions, PipelineTimings } from './data-provider.js';
 import { UnsupportedDatasetError } from './data-provider.js';
 import { extractMultiscales } from './zarr-validator.js';
 import { v2ToV3ArrayMetadata, compressionLabel } from './zarr-v2-metadata.js';
@@ -214,7 +214,7 @@ export class ZarrDataProvider extends BaseZarrProvider {
 
 
   /** Load a fully assembled 66³ brick via the worker pool (fully off main thread). */
-  async loadBrick(lod: number, bx: number, by: number, bz: number, channelIndex = 0, signal?: AbortSignal): Promise<BrickLoadResult | null> {
+  async loadBrick(lod: number, bx: number, by: number, bz: number, channelIndex = 0, signal?: AbortSignal, options?: BrickLoadOptions): Promise<BrickLoadResult | null> {
     const meta = this.getMetadata();
     const level = meta.levels.find(l => l.lod === lod);
     if (!level) return null;
@@ -226,7 +226,7 @@ export class ZarrDataProvider extends BaseZarrProvider {
     }
 
     try {
-      const result = await this.workerPool!.loadBrick(lod, bx, by, bz, this.sourceChannelFor(channelIndex), signal, meta.timepoint);
+      const result = await this.workerPool!.loadBrick(lod, bx, by, bz, this.sourceChannelFor(channelIndex), signal, meta.timepoint, options?.coreOnly);
 
       // Cache stats for isBrickEmpty checks
       this.cacheBrickStats(lod, bx, by, bz, {

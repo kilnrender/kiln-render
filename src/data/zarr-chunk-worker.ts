@@ -11,7 +11,8 @@ import zstd from 'numcodecs/zstd';
 import { TolerantFetchStore } from './tolerant-fetch-store.js';
 import { float32ToFloat16Bits, getUint16ToFloat16Lut } from '../utils/float16.js';
 import { SharedFetchRegistry } from './shared-fetch.js';
-import { computeBrickChunkFootprint, computeBrickCoreChunkRange, clampedLutEntry, chunkCoords, chunkLayout } from './chunk-math.js';
+import { computeBrickChunkFootprint, computeBrickCoreChunkRange, sameChunkRange, clampedLutEntry, chunkCoords, chunkLayout } from './chunk-math.js';
+import type { ChunkRange } from './chunk-math.js';
 
 // Static codec imports — zarrita's dynamic imports fail in Vite dev workers.
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -53,6 +54,8 @@ export interface ZarrWorkerRequest {
   channelIndex?: number;
   /** Time index to load; defaults to the lodParams timepoint fixed at init. */
   timepoint?: number;
+  /** For 'loadBrick': fetch only the core's chunks (BrickLoadOptions.coreOnly). */
+  coreOnly?: boolean;
   /**
    * Main-thread timestamp (Date.now — NOT performance.now, which has a
    * per-context time origin and can't be diffed across the worker boundary)
@@ -104,6 +107,8 @@ export interface ZarrWorkerResponse {
   /** Raw-space min/max for float data (before normalisation) — used for range derivation */
   rawMin?: number;
   rawMax?: number;
+  /** The ghost border repeats core voxels where its chunks were not at hand (coreOnly) */
+  partialBorder?: boolean;
   /** Per-stage timing (ms) — for pipeline telemetry */
   fetchMs?: number;
   assemblyMs?: number;
@@ -315,7 +320,7 @@ self.onmessage = (event: MessageEvent<ZarrWorkerRequest>) => {
 
     (async () => {
       try {
-        const result = await assembleBrick(lod!, bx!, by!, bz!, channelIndex, controller.signal, timepoint);
+        const result = await assembleBrick(lod!, bx!, by!, bz!, channelIndex, controller.signal, timepoint, event.data.coreOnly);
 
         activeControllers.delete(id);
         cancelledRequests.delete(id);
@@ -330,6 +335,7 @@ self.onmessage = (event: MessageEvent<ZarrWorkerRequest>) => {
           avg: result.avg,
           rawMin: result.rawMin,
           rawMax: result.rawMax,
+          partialBorder: result.partialBorder,
           fetchMs: result.fetchMs,
           assemblyMs: result.assemblyMs,
           queueMs,
@@ -363,8 +369,8 @@ self.onmessage = (event: MessageEvent<ZarrWorkerRequest>) => {
  * Full brick assembly: fetch overlapping chunks, decompress, re-chunk into 66³ brick
  */
 async function assembleBrick(
-  lod: number, bx: number, by: number, bz: number, channelIndex: number, signal?: AbortSignal, requestedTimepoint?: number,
-): Promise<{ buffer: ArrayBuffer; min: number; max: number; avg: number; rawMin?: number; rawMax?: number; fetchMs: number; assemblyMs: number; chunkHits: number; chunkTotal: number; coreChunkKeys?: string[]; fetchedChunkBytes?: [string, number][] }> {
+  lod: number, bx: number, by: number, bz: number, channelIndex: number, signal?: AbortSignal, requestedTimepoint?: number, coreOnly = false,
+): Promise<{ buffer: ArrayBuffer; min: number; max: number; avg: number; rawMin?: number; rawMax?: number; partialBorder?: boolean; fetchMs: number; assemblyMs: number; chunkHits: number; chunkTotal: number; coreChunkKeys?: string[]; fetchedChunkBytes?: [string, number][] }> {
   const arr = arrays[lod]!;
   const params = lodParams![lod]!;
   const { scaleX, scaleY, scaleZ, actualDimX, actualDimY, actualDimZ, csx, csy, csz, shapePrefixLength, channelAxisIdx, channelChunkSize, spatialOrder, timeAxisIdx, timeChunkSize } = params;
@@ -374,11 +380,33 @@ async function assembleBrick(
 
   // Virtual brick voxel range (in uniformly downsampled space) and which
   // Zarr chunks overlap it.
-  const { vStartX, vStartY, vStartZ, minCx, maxCx, minCy, maxCy, minCz, maxCz } =
-    computeBrickChunkFootprint(
-      { scaleX, scaleY, scaleZ, actualDimX, actualDimY, actualDimZ, csx, csy, csz },
-      bx, by, bz, LOGICAL_SIZE, physSize,
-    );
+  const chunkParams = { scaleX, scaleY, scaleZ, actualDimX, actualDimY, actualDimZ, csx, csy, csz };
+  const footprint = computeBrickChunkFootprint(chunkParams, bx, by, bz, LOGICAL_SIZE, physSize);
+  const { vStartX, vStartY, vStartZ } = footprint;
+  const chunkKey = (cz: number, cy: number, cx: number) => `${timepoint}:${cacheKey(lod, cz, cy, cx, channelChunk)}`;
+
+  // coreOnly: leave out the chunks only the ghost border reaches, unless all of them are
+  // cached already. The LUT clamp below then repeats the nearest core voxel in the border.
+  let range: ChunkRange = footprint;
+  let partialBorder = false;
+  if (coreOnly) {
+    const core = computeBrickCoreChunkRange(chunkParams, bx, by, bz, LOGICAL_SIZE);
+    const inCore = (cz: number, cy: number, cx: number) =>
+      cz >= core.minCz && cz <= core.maxCz && cy >= core.minCy && cy <= core.maxCy && cx >= core.minCx && cx <= core.maxCx;
+    let borderCached = true;
+    for (let cz = footprint.minCz; cz <= footprint.maxCz && borderCached; cz++) {
+      for (let cy = footprint.minCy; cy <= footprint.maxCy && borderCached; cy++) {
+        for (let cx = footprint.minCx; cx <= footprint.maxCx; cx++) {
+          if (!inCore(cz, cy, cx) && !chunkCache.has(chunkKey(cz, cy, cx))) { borderCached = false; break; }
+        }
+      }
+    }
+    if (!sameChunkRange(core, footprint) && !borderCached) {
+      range = core;
+      partialBorder = true;
+    }
+  }
+  const { minCx, maxCx, minCy, maxCy, minCz, maxCz } = range;
 
   // --- Stage 1: chunk fetch (HTTP + zarr decompression, parallel, with cache + dedup) ---
   const t0 = performance.now();
@@ -411,7 +439,7 @@ async function assembleBrick(
     for (let cy = minCy; cy <= maxCy; cy++) {
       for (let cx = minCx; cx <= maxCx; cx++) {
         const fi = (cz - minCz) * ncy * ncx + (cy - minCy) * ncx + (cx - minCx);
-        const key = `${timepoint}:${cacheKey(lod, cz, cy, cx, channelChunk)}`;
+        const key = chunkKey(cz, cy, cx);
         const cached = chunkCache.get(key);
         if (cached) {
           // refresh recency: delete+re-set moves to end of map iteration order (LRU)
@@ -485,15 +513,12 @@ async function assembleBrick(
         tagged.delete(key);
       }
     }
-    const core = computeBrickCoreChunkRange(
-      { scaleX, scaleY, scaleZ, actualDimX, actualDimY, actualDimZ, csx, csy, csz },
-      bx, by, bz, LOGICAL_SIZE,
-    );
+    const core = computeBrickCoreChunkRange(chunkParams, bx, by, bz, LOGICAL_SIZE);
     coreChunkKeys = [];
     for (let cz = core.minCz; cz <= core.maxCz; cz++) {
       for (let cy = core.minCy; cy <= core.maxCy; cy++) {
         for (let cx = core.minCx; cx <= core.maxCx; cx++) {
-          coreChunkKeys.push(`${timepoint}:${cacheKey(lod, cz, cy, cx, channelChunk)}`);
+          coreChunkKeys.push(chunkKey(cz, cy, cx));
         }
       }
     }
@@ -652,6 +677,7 @@ async function assembleBrick(
     avg: sum / voxelCount,
     rawMin: isFloat32 && isFinite(rawMinVal) ? rawMinVal : undefined,
     rawMax: isFloat32 && isFinite(rawMaxVal) ? rawMaxVal : undefined,
+    partialBorder: partialBorder || undefined,
     fetchMs,
     assemblyMs,
     chunkHits,

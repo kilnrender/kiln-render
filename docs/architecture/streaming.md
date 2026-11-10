@@ -52,6 +52,19 @@ On a 10 MB/s, 40 ms link this brought first content from 3.3 s to 0.6 s for a 4-
 
 On the same link: first new detail after a zoom went from 11.5 s to 3.2 s (4-channel embryo) and from 4.4 s to 1.0 s (4-channel yeast); a pan across the embryo re-converges in 2.1 s instead of 5.4 s with 97 % fewer bytes.
 
+## Lazy ghost borders
+
+Experimental, `?lazyborder=1`. OME-Zarr only.
+
+A brick is stored with a one-voxel border so that filtering never leaves its atlas slot. That border lies in the neighbouring chunks: where chunks match the brick grid (64³), a brick's own voxels are in 1 chunk and its border in 26 more. Around the camera the desired set is a few bricks thick per level, so most of those neighbours are needed by no other brick. In such views well over half of the downloaded bytes serve only borders (`borderOnlyBytes` in the `?bench=1` report).
+
+With lazy borders a refined brick is
+
+1. loaded from the chunks its 64³ core overlaps and shown with its outermost voxels repeated in the border (border chunks a worker already holds are used right away),
+2. loaded again in full once no desired brick is missing, nearest first, and uploaded over the first version.
+
+The same bytes are downloaded, in a better order: all detail first, borders after. Until a brick's border is real, interpolation and gradients across its faces use the repeated voxels, which can show as faint seams between bricks. The base level always loads in full. A brick that turns out empty never fetches its border chunks.
+
 ## Ray-guided selection
 
 On by default; `?rayguide=0` turns it off.

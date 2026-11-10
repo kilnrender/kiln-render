@@ -88,6 +88,12 @@ export function computeBrickCoreChunkRange(
   return { minCx, maxCx, minCy, maxCy, minCz, maxCz };
 }
 
+/** Whether two chunk ranges cover the same chunks. */
+export function sameChunkRange(a: ChunkRange, b: ChunkRange): boolean {
+  return a.minCx === b.minCx && a.maxCx === b.maxCx && a.minCy === b.minCy && a.maxCy === b.maxCy
+    && a.minCz === b.minCz && a.maxCz === b.maxCz;
+}
+
 /** Bench accounting: total downloaded chunk payload bytes (excluding shared shard indexes), and the part from chunks
  *  that no brick's core needed (downloaded only for ghost borders). */
 export function summarizeBorderBytes(

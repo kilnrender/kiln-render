@@ -32,7 +32,7 @@ function manager(): any {
     loadedBricks: new Map(), emptyBricks: new Map(), pinnedBricks: new Set(), desiredKeys: new Set(),
     inFlightRequests: new Map(), inFlightStaleTime: new Map(), loadQueue: [], lastStats: {},
     resources: { allocator: { touch: vi.fn(), usedCount: 0, totalSlots: 512 } },
-    frameCount: 0, rayGuided: false, rayViews: [],
+    frameCount: 0, rayGuided: false, rayViews: [], partialBorders: new Set(), borderQueue: [],
   });
   return m;
 }
