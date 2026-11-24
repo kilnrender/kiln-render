@@ -58,6 +58,7 @@
     "test:run": "vitest run",
     "test:visual": "playwright test",
     "test:visual:update": "playwright test --update-snapshots=all",
+    "capture": "bun scripts/capture.ts",
     "lint:publish": "bun run build:lib && bunx publint && bunx @arethetypeswrong/cli --pack . --profile esm-only && node scripts/check-consumer-types.mjs"
   },
   "dependencies": {

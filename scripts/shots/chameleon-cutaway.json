@@ -1,0 +1,6 @@
+{
+  "url": "https://kilnrender.com/app/?mode=dvr&wc=0.35&ww=0.55&tf=grayscale&up=-y&cam=0.070%2C3.630%2C1.497%2C0.108%2C0.001%2C-0.066",
+  "seconds": 12,
+  "actions": [{ "at": 3, "until": 7, "set": { "clipMax": [1, 1, 0.5] } }],
+  "captions": [{ "from": 3, "to": 12, "text": "Clip planes: cut it open, stream only what's left" }]
+}
