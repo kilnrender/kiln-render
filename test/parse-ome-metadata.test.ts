@@ -491,6 +491,18 @@ describe('parseOmeMetadata — OMERO channel display hints', () => {
   });
 });
 
+describe('parseOmeMetadata — spatial unit', () => {
+  const provider = new TestProvider();
+
+  it('reports the spatial unit with the spacing', () => {
+    const axes = ['z', 'y', 'x'].map(name => ({ name, type: 'space', unit: 'micrometer' }));
+    const datasets = [{ path: '0', coordinateTransformations: [{ type: 'scale', scale: [2, 0.5, 0.5] }] }];
+    const { metadata } = provider.parse(v5Attrs(datasets, { axes }), [arr([64, 64, 64], [32, 32, 32])]);
+    expect(metadata.spatialUnit).toBe('micrometer');
+    expect(provider.parse(v5Attrs(datasets), [arr([64, 64, 64], [32, 32, 32])]).metadata.spatialUnit).toBeUndefined();
+  });
+});
+
 describe('parseOmeMetadata — native pyramid', () => {
   const provider = new TestProvider();
 

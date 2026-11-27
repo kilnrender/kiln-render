@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
-import { normalizeAxes, extractMultiscales, validateZarrSupport, spatialOrder } from '../src/data/zarr-validator.js';
+import { normalizeAxes, extractMultiscales, validateZarrSupport, spatialOrder, spatialUnit } from '../src/data/zarr-validator.js';
 
 // ---------------------------------------------------------------------------
 // normalizeAxes
@@ -101,6 +101,23 @@ describe('normalizeAxes', () => {
     // Unusual but valid — trust the explicit type over the name
     const axes = normalizeAxes([{ name: 'c', type: 'space' }]);
     expect(axes[0]).toEqual({ name: 'c', type: 'space' });
+  });
+});
+
+describe('spatialUnit', () => {
+  const space = (name: string, unit?: string) => ({ name, type: 'space', ...(unit ? { unit } : {}) });
+
+  it('returns the unit all spatial axes share, ignoring channel and time', () => {
+    const axes = [{ name: 't', type: 'time', unit: 'second' }, { name: 'c', type: 'channel' },
+      space('z', 'micrometer'), space('y', 'micrometer'), space('x', 'micrometer')];
+    expect(spatialUnit(axes)).toBe('micrometer');
+  });
+
+  it('is undefined for mixed, missing or string axes', () => {
+    expect(spatialUnit([space('z', 'nanometer'), space('y', 'micrometer'), space('x', 'micrometer')])).toBeUndefined();
+    expect(spatialUnit([space('z'), space('y', 'micrometer'), space('x', 'micrometer')])).toBeUndefined();
+    expect(spatialUnit(['z', 'y', 'x'])).toBeUndefined();
+    expect(spatialUnit(undefined)).toBeUndefined();
   });
 });
 

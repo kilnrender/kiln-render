@@ -65,6 +65,8 @@ export interface VolumeMetadata {
   dimensions: [number, number, number];
   /** Physical voxel spacing (optional, for correct aspect ratio) */
   voxelSpacing?: [number, number, number];
+  /** Unit of `voxelSpacing` (OME-Zarr axis unit, e.g. "micrometer"); absent when unknown or mixed */
+  spatialUnit?: string;
   /** Logical brick size (e.g., 64) */
   brickSize: number;
   /** Physical brick size including ghost voxels (e.g., 66) */

@@ -19,7 +19,7 @@ import { resolveSourceSelection } from './source-selection.js';
 import { valueTypeFor } from './value-types.js';
 import { UnsupportedDatasetError } from './data-provider.js';
 import { NetworkTracker } from './network-tracker.js';
-import { extractMultiscales, normalizeAxes, spatialOrder, validateZarrSupport } from './zarr-validator.js';
+import { extractMultiscales, normalizeAxes, spatialOrder, spatialUnit, validateZarrSupport } from './zarr-validator.js';
 import { estimateBrickChunkFanout, computeBrickChunkFootprint, pickXyz } from './chunk-math.js';
 import type { SpatialOrder } from './chunk-math.js';
 import { buildPyramid } from '../core/pyramid.js';
@@ -447,6 +447,7 @@ export abstract class BaseZarrProvider implements DataProvider {
       name,
       dimensions: levels[0]!.dimensions,
       voxelSpacing,
+      spatialUnit: voxelSpacing ? spatialUnit(ms.axes) : undefined,
       brickSize: LOGICAL_BRICK_SIZE,
       physicalBrickSize: PHYSICAL_BRICK_SIZE,
       maxLod: numScales - 1,
