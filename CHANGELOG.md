@@ -7,6 +7,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 ## [Unreleased]
 
 ### Added
+- Video capture: `bun run capture <shot.json>` records a viewer URL to MP4: a turntable or camera path, timed setting changes (render mode, shading, clip planes, slices, channels, timepoints), captions and a stats line. Frames are either fully loaded, refining as the camera moves, or real time. The viewers expose it on `?capture=1`.
 - A scale bar in both viewers, bottom left of the main view, when the dataset's spatial axes have a unit (OME-Zarr `axes[].unit`). It shows a round length at the camera target and follows zoom and resizing. `VolumeMetadata.spatialUnit` carries the unit.
 
 ## [0.6.1] - 2026-10-31
